@@ -1,9 +1,9 @@
-# --- Backend Build Stage (no frontend build) ---
+# --- Backend Build Stage (self-contained, no external prebuilt image) ---
 ARG FRONTEND_IMAGE=antigravity-manager:latest
 FROM rust:1-slim-bookworm AS backend-builder
 ARG USE_MIRROR=auto
 
-# Conditionally use Aliyun mirror for APT
+# Conditionally use Aliyun mirror for APT (faster builds in CN)
 RUN if [ "$USE_MIRROR" = "true" ] || ( [ "$USE_MIRROR" = "auto" ] && ! timeout 3 bash -c "</dev/tcp/www.google.com/80" 2>/dev/null ); then \
     echo "Using Aliyun mirror for APT..."; \
     sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources || \
@@ -12,7 +12,6 @@ RUN if [ "$USE_MIRROR" = "true" ] || ( [ "$USE_MIRROR" = "auto" ] && ! timeout 3
     echo "Using default APT sources..."; \
     fi
 
-# Install build dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config \
     build-essential \
@@ -34,12 +33,12 @@ RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Use Aliyun mirror for Cargo if needed (Sparse Index)
+# Conditionally use Aliyun mirror for Cargo (faster builds in CN)
 ENV CARGO_HTTP_MULTIPLEXING=false
 RUN if [ "$USE_MIRROR" = "true" ] || ( [ "$USE_MIRROR" = "auto" ] && ! timeout 3 bash -c "</dev/tcp/www.google.com/80" 2>/dev/null ); then \
     echo "Using Aliyun mirror for Cargo..."; \
     mkdir -p /root/.cargo && \
-    echo "[source.crates-io]\nreplace-with = 'aliyun'\n\n[source.aliyun]\nregistry = \"sparse+https://mirrors.aliyun.com/crates.io-index/\"" > /root/.cargo/config.toml; \
+    echo "[source.crates-io]\nreplace-with = '"'"'aliyun'"'"'\n\n[source.aliyun]\nregistry = \"sparse+https://mirrors.aliyun.com/crates.io-index/\"" > /root/.cargo/config.toml; \
     else \
     echo "Using default Cargo registry..."; \
     fi
@@ -48,9 +47,9 @@ WORKDIR /app
 COPY src-tauri ./src-tauri
 COPY src/locales ./src/locales
 
-# tauri::generate_context! requires ../dist to exist at compile time.
-# The real frontend dist is provided at runtime via ABV_DIST_PATH.
-RUN mkdir -p /app/dist && echo '<html><body>placeholder</body></html>' > /app/dist/index.html
+# tauri::generate_context! requires a dist directory at compile time.
+# Create a minimal placeholder dist since we run --headless (no real GUI needed).
+RUN mkdir -p /app/dist && echo '"'"'<!DOCTYPE html><html><head><title>Antigravity</title></head><body><h1>Antigravity Manager (Headless)</h1></body></html>'"'"' > /app/dist/index.html
 
 WORKDIR /app/src-tauri
 RUN --mount=type=cache,target=/root/.cargo/registry \
@@ -58,10 +57,6 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/app/src-tauri/target \
     cargo build --release --bin antigravity-tools && \
     cp target/release/antigravity-tools /tmp/antigravity-tools
-
-# --- Frontend Dist Stage (reuse prebuilt image) ---
-ARG FRONTEND_IMAGE=antigravity-manager:latest
-FROM ${FRONTEND_IMAGE} AS frontend-prebuilt
 
 # --- Final Runtime Stage ---
 FROM debian:bookworm-slim
@@ -92,8 +87,8 @@ RUN apt-get update && apt-get install -y \
 # Copy binary from builder
 COPY --from=backend-builder /tmp/antigravity-tools /app/antigravity-tools
 
-# Copy frontend dist from prebuilt image
-COPY --from=frontend-prebuilt /app/dist /app/dist
+# Copy placeholder dist (no real frontend needed for headless mode)
+COPY --from=backend-builder /app/dist /app/dist
 
 # Set environment variables
 ENV ABV_DIST_PATH=/app/dist
