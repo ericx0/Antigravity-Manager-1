@@ -1,0 +1,37 @@
+services:
+  antigravity-manager:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    image: antigravity-manager-headless:latest
+    container_name: antigravity-manager
+    # Northflank: port mapping instead of host network
+    ports:
+      - "8045:8045"
+    # Persistent volume for SQLite + refresh tokens
+    volumes:
+      - antigravity-data:/root/.antigravity_tools
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - API_KEY=${API_KEY:?API_KEY is required}
+      - ABV_API_KEY=${API_KEY}
+      - ABV_BIND_LOCAL_ONLY=${ABV_BIND_LOCAL_ONLY:-false}
+      - ABV_DATA_DIR=/root/.antigravity_tools
+      - ABV_DIST_PATH=/app/dist
+      - ABV_PUBLIC_URL=${ABV_PUBLIC_URL:-}
+      - RUST_LOG=${RUST_LOG:-info}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8045/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+volumes:
+  antigravity-data:
